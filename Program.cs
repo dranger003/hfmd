@@ -4,8 +4,6 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
-args = new[] { "tiiuae/falcon-7b-instruct", @"\LLM_MODELS" };
-
 if (args.Length < 1)
 {
     Console.WriteLine(
