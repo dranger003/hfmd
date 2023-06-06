@@ -1,8 +1,10 @@
 ﻿using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
+using System.Text.RegularExpressions;
 using Spectre.Console;
+
+args = new[] { "tiiuae/falcon-7b-instruct", @"\LLM_MODELS" };
 
 if (args.Length < 1)
 {
@@ -19,8 +21,18 @@ if (args.Length < 1)
 }
 
 var name = args[0];
-var path = Path.GetFullPath(args.Length > 1 ? args[1] : ".");
+var match = Regex.Match(name, "^(?<Owner>.+)\\/(?<Model>.+)$");
+
+if (!match.Success)
+{
+    Console.WriteLine($"Error: Invalid model name ({name}).");
+    return;
+}
+
+var path = Path.Combine(Path.GetFullPath(args.Length > 1 ? args[1] : "."), match.Groups["Owner"].Value, match.Groups["Model"].Value);
 var branch = args.Length > 2 ? args[1] : "main";
+
+Console.WriteLine($"Saving to [{path}].");
 
 if (!Directory.Exists(path))
     Directory.CreateDirectory(path);
@@ -62,7 +74,8 @@ async Task<List<FileEntry>> Fetch(HttpClient httpClient, string name, string bra
     using var response = await httpClient.GetAsync($"https://hf.co/api/models/{name}/tree/{branch}", cancellationTokenSource.Token);
     response.EnsureSuccessStatusCode();
     var content = await response.Content.ReadAsStringAsync(cancellationTokenSource.Token);
-    return JsonSerializer.Deserialize<List<FileEntry>>(content) ?? new();
+    var fileEntries = JsonSerializer.Deserialize<List<FileEntry>>(content) ?? new();
+    return fileEntries.Where(fileEntry => fileEntry.Type == "file").ToList();
 }
 
 async Task Download(HttpClient httpClient, ProgressTask task, string fileEntryPath)
@@ -70,7 +83,7 @@ async Task Download(HttpClient httpClient, ProgressTask task, string fileEntryPa
     try
     {
         using var response = await httpClient.GetAsync(
-            $"https://hf.co/{args[0]}/resolve/{args[1]}/{fileEntryPath}",
+            $"https://hf.co/{name}/resolve/{branch}/{fileEntryPath}",
             HttpCompletionOption.ResponseHeadersRead,
             cancellationTokenSource.Token
         );
