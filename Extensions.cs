@@ -1,4 +1,5 @@
 ﻿using System.Net.Http.Headers;
+using System.Security.Cryptography;
 
 namespace hfmd
 {
@@ -16,6 +17,13 @@ namespace hfmd
             request.Content = content;
 
             return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+
+        public static string Sha256Sum(this byte[] data)
+        {
+            using var sha256 = SHA256.Create();
+            var hash = sha256.ComputeHash(data);
+            return BitConverter.ToString(hash).Replace("-", String.Empty).ToLowerInvariant();
         }
     }
 }

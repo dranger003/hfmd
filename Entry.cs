@@ -8,10 +8,10 @@ namespace hfmd
         public string? Oid { get; set; }
 
         [JsonPropertyName("size")]
-        public long Size { get; set; }
+        public long? Size { get; set; }
 
         [JsonPropertyName("pointerSize")]
-        public int PointerSize { get; set; }
+        public int? PointerSize { get; set; }
     }
 
     internal class Entry
@@ -23,7 +23,7 @@ namespace hfmd
         public string? Oid { get; set; }
 
         [JsonPropertyName("size")]
-        public long Size { get; set; }
+        public long? Size { get; set; }
 
         [JsonPropertyName("lfs")]
         public EntryLfs? Lfs { get; set; }
@@ -32,6 +32,6 @@ namespace hfmd
         public string? Path { get; set; }
 
         [JsonIgnore]
-        public List<Entry> Entries { get; set; } = new();
+        public List<Entry>? Entries { get; set; } = [];
     }
 }

@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "hfmd": {
+      "commandName": "Project",
+      "commandLineArgs": "abacusai/Smaug-34B-v0.1 C:\\LLM_MODELS\\"
+    }
+  }
+}
