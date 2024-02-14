@@ -1,5 +1,6 @@
 ﻿using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
+
 using Spectre.Console;
 
 namespace hfmd
@@ -10,35 +11,30 @@ namespace hfmd
 
         private static async Task Main(string[] args)
         {
+            // hfmd.exe ikawrakow/mixtral-instruct-8x7b-quantized-gguf C:\LLM_MODELS\
+            // hfmd.exe dataset:ikawrakow/validation-datasets-for-llama.cpp C:\LLM_MODELS\
+
+            var cancellationTokenSource = new CancellationTokenSource();
+            Console.CancelKeyPress += (s, e) => cancellationTokenSource.Cancel(!(e.Cancel = true));
+
+            var match = Regex.Match(args[0], @"(?i)^(?:(?<Dataset>dataset:))?(?<Owner>.+)\/(?<Name>.+)$");
+            var id = $"{match.Groups["Owner"]}/{match.Groups["Name"].Value}";
+            var savePath = $"{Path.Combine(Path.GetFullPath(args[1]), match.Groups["Owner"].Value, match.Groups["Name"].Value)}{Path.DirectorySeparatorChar}";
+            var branchName = args.Length > 2 ? args[2] : null;
+            var isDataset = match.Groups["Dataset"].Value == "dataset:";
+
+            var entries = await HuggingFace.FetchEntriesAsync(!isDataset ? HuggingFace.RepoType.Model : HuggingFace.RepoType.Dataset, id, cancellationToken: cancellationTokenSource.Token);
+            var maxPathLength = entries.Max(x => x.Path?.Length) ?? 0;
+
+            entries.ForEach(entry => entry.Id = $"{entry.Path}{new String(' ', maxPathLength + 4 - (entry.Path?.Length ?? 0))}(Type={entry.Type})");
+            var entriesByText = entries.ToDictionary(k => k.Id ?? $"{Guid.NewGuid}");
+
+            var selectedEntries = new List<Entry>();
+
+            if (isDataset)
             {
-                var cancellationTokenSource = new CancellationTokenSource();
-                Console.CancelKeyPress += (s, e) => cancellationTokenSource.Cancel(!(e.Cancel = true));
-
-                {
-                    var modelId = args[0];
-                    var match = Regex.Match(modelId, "^(?<Owner>.+)\\/(?<Model>.+)$");
-                    var savePath = $"{Path.Combine(Path.GetFullPath(args[1]), match.Groups["Owner"].Value, match.Groups["Model"].Value)}{Path.DirectorySeparatorChar}";
-                    var branchName = args.Length > 2 ? args[2] : null;
-
-                    var entries = await HuggingFace.FetchModelEntriesAsync(modelId, cancellationToken: cancellationTokenSource.Token);
-                    var maxPathLength = entries.Max(x => x.Path?.Length) ?? 0;
-
-                    var fileEntries = entries
-                        .Select(
-                            x => new
-                            {
-                                x.Path,
-                                x.Lfs?.Oid,
-                                x.Type,
-                                x.Size,
-                                Text = $"{x.Path}{new String(' ', maxPathLength + 4 - (x.Path?.Length ?? 0))}(Type={x.Type})",
-                            }
-                        )
-                        .ToList();
-
-                    var fileEntriesByText = fileEntries.ToDictionary(k => k.Text);
-
-                    var selectedFileEntries = AnsiConsole.Prompt(
+                selectedEntries.AddRange(
+                    AnsiConsole.Prompt(
                         new MultiSelectionPrompt<string>()
                             .Title($"Saving to [[{savePath}]].\nSelect file(s) to download:")
                             .NotRequired()
@@ -47,175 +43,206 @@ namespace hfmd
                             .InstructionsText("[grey](Press [blue]<space>[/] to toggle an entry, [green]<enter>[/] to accept)[/]")
                             .AddChoiceGroup(
                                 "Files",
-                                fileEntries
-                                    .Where(fileEntry => !Path.GetFileName(fileEntry.Path ?? String.Empty).StartsWith("."))
-                                    .Where(fileEntry => Path.GetExtension(fileEntry.Path) != ".safetensors" && fileEntry.Path != "model.safetensors.index.json")
-                                    .Where(fileEntry => Path.GetExtension(fileEntry.Path) != ".bin" && fileEntry.Path != "pytorch_model.bin.index.json")
-                                    .Select(fileEntry => fileEntry.Text).ToList()
-                            )
-                            .AddChoiceGroup(
-                                "Safetensors",
-                                fileEntries
-                                    .Where(fileEntry => Path.GetExtension(fileEntry.Path) == ".safetensors" || fileEntry.Path == "model.safetensors.index.json")
-                                    .Select(fileEntry => fileEntry.Text)
-                                    .ToList()
-                            )
-                            .AddChoiceGroup(
-                                "PyTorch",
-                                fileEntries
-                                    .Where(fileEntry => Path.GetExtension(fileEntry.Path) == ".bin" || fileEntry.Path == "pytorch_model.bin.index.json")
-                                    .Select(fileEntry => fileEntry.Text)
+                                entries
+                                    .Where(entry => !Path.GetFileName(entry.Path ?? String.Empty).StartsWith("."))
+                                    .Select(entry => entry.Id ?? String.Empty)
                                     .ToList()
                             )
                             .AddChoiceGroup(
                                 "Files (dot)",
-                                fileEntries
-                                    .Where(fileEntry => Path.GetFileName(fileEntry.Path ?? String.Empty).StartsWith("."))
-                                    .Select(fileEntry => fileEntry.Text).ToList()
+                                entries
+                                    .Where(entry => Path.GetFileName(entry.Path ?? String.Empty).StartsWith("."))
+                                    .Select(entry => entry.Id ?? String.Empty)
+                                    .ToList()
                             )
-                    ).Select(text => fileEntriesByText[text]).ToList();
-
-                    var table = new Table();
-                    table.AddColumns(["Type", "SHA256", "Size", "Path"]);
-                    selectedFileEntries.ForEach(fileEntry => table.AddRow(fileEntry.Type ?? String.Empty, fileEntry.Oid ?? String.Empty, $"{fileEntry.Size}", fileEntry.Path ?? String.Empty));
-                    AnsiConsole.Write(table);
-
-                    if (!Directory.Exists(savePath))
-                        Directory.CreateDirectory(savePath);
-
-                    await AnsiConsole.Progress()
-                        .AutoClear(false)
-                        .HideCompleted(false)
-                        .Columns(
-                            [
-                                new TaskDescriptionColumn(),
-                                new ProgressBarColumn(),
-                                new PercentageColumn(),
-                                new RemainingTimeColumn(),
-                                new TransferSpeedColumn(),
-                                new SpinnerColumn(),
-                            ]
-                        )
-                        .StartAsync(async ctx =>
-                        {
-                            await Task.WhenAll(selectedFileEntries.Select(async fileEntry =>
-                            {
-                                var task = ctx.AddTask(fileEntry.Path ?? String.Empty, new ProgressTaskSettings { AutoStart = true });
-                                await Download(task, modelId, branchName ?? "main", savePath, fileEntry.Path ?? String.Empty, fileEntry.Size ?? 0, cancellationTokenSource.Token);
-                            }));
-                        });
-                }
-
-                //{
-                //    var instructions = "You are a helpful assistant, and you respond exclusively using markdown tables.";
-                //    //var prompt = "What are the planets of the solar system in order from the Sun? Include other details like the distance from the Sun in AU, how many moons, circumference, etc.";
-                //    var prompts = new[]
-                //    {
-                //        "What is 1+1?",
-                //        "2",
-                //        "What is 2+2?",
-                //    };
-
-                //    await foreach (var token in GptModel.PromptAsync(instructions, prompts, cancellationTokenSource.Token))
-                //    {
-                //        await Console.Out.WriteAsync(token);
-                //    }
-                //}
-
-                //{
-                //    var models = await HuggingFace.SearchModelsAsync(author: "TheBloke", search: "GGML", full: true, config: true, cancellationToken: cancellationTokenSource.Token);
-
-                //    await models
-                //        .OrderByDescending(x => x.LastModified)
-                //        .Take(1)
-                //        .ForEachAsync(async model => {
-                //            await Console.Out.WriteLineAsync($"[{model.Id}][{model.LastModified}][{model.Siblings.Count}]");
-                //            //await WriteEntriesAsync(await HuggingFace.FetchModelEntriesAsync(model.Id), 4);
-
-                //            var card = await HuggingFace.FetchModelCardAsync(model.Id) ?? String.Empty;
-                //            //var html = Markdig.Markdown.ToHtml(card);
-                //            await Console.Out.WriteLineAsync(card);
-
-                //            //var fileName = Path.GetFullPath("README.html");
-                //            //await Console.Out.WriteLineAsync($"[{fileName}]");
-                //            //await File.WriteAllTextAsync(fileName, html);
-                //            //Process.Start(new ProcessStartInfo { FileName = fileName, UseShellExecute = true });
-                //        });
-                //}
-
-                //{
-                //    var authors = new[]
-                //    {
-                //        "Open-Orca",
-                //        "OpenAssistant",
-                //        "ehartford",
-                //    };
-
-                //    var datasets = await HuggingFace.SearchDatasetsAsync(author: authors[0], full: true, cancellationToken: cancellationTokenSource.Token);
-
-                //    await datasets
-                //        .OrderByDescending(x => x.LastModified)
-                //        .Take(1)
-                //        .ForEachAsync(async dataset => {
-                //            await Console.Out.WriteLineAsync($"[{dataset.Id}][{dataset.LastModified}]");
-                //            await WriteEntriesAsync(await HuggingFace.FetchDatasetEntriesAsync(dataset.Id), 4);
-                //            //await Console.Out.WriteLineAsync(await HuggingFace.FetchDatasetCardAsync(dataset.Id));
-                //        });
-                //}
-
-                //{
-                //    var id = "Open-Orca/OpenOrca";
-                //    var path = "3_5M-GPT3_5-Augmented.parquet";
-                //    var branch = "main";
-                //    var size = 3090560834L;
-
-                //    var chunkCount = 4;
-                //    var chunkSize = (long)(size / (double)chunkCount);
-                //    var chunkRemainder = size % chunkCount;
-
-                //    var url = $"https://hf.co/datasets/{id}/resolve/{branch}/{path}";
-
-                //    var ranges = Enumerable.Range(0, 4)
-                //        .Select(
-                //            i =>
-                //            {
-                //                var from = i * chunkSize;
-                //                var to = from + chunkSize - 1 + (i < chunkCount - 1 ? 0 : chunkRemainder);
-                //                return (From: from, To: to, Length: to - from + 1);
-                //            }
-                //        )
-                //        .ToList();
-
-                //    //var total = ranges
-                //    //    .Select(x => x.Length)
-                //    //    .Aggregate((x, y) => x + y);
-
-                //    var tasks = ranges
-                //        .Select(
-                //            (x, i) => {
-                //                var fileInfo = new FileInfo($"{path}.part{i:00}");
-                //                return DownloadFile(
-                //                    url,
-                //                    fileInfo.Name,
-                //                    x.From,
-                //                    x.To,
-                //                    //progress: (read, total) => Console.Write($"\r{new String(' ', 100)}\r{read}/{total} [{read / (double)total * 100:0.0} %]"),
-                //                    cancellationToken: cancellationTokenSource.Token
-                //                );
-                //            }
-                //        )
-                //        .ToList();
-
-                //    await Task.WhenAll(tasks);
-
-                //    await Console.Out.WriteLineAsync();
-                //    if (cancellationTokenSource.IsCancellationRequested)
-                //        await Console.Out.WriteLineAsync($"Cancelled.");
-                //}
+                    ).Select(text => entriesByText[text])
+                    .ToList()
+                );
             }
+            else
+            {
+                selectedEntries.AddRange(
+                    AnsiConsole.Prompt(
+                        new MultiSelectionPrompt<string>()
+                            .Title($"Saving to [[{savePath}]].\nSelect file(s) to download:")
+                            .NotRequired()
+                            .PageSize(Math.Min(entries.Count, Console.WindowHeight - 6))
+                            .MoreChoicesText("[grey](Move up and down to reveal more entries)[/]")
+                            .InstructionsText("[grey](Press [blue]<space>[/] to toggle an entry, [green]<enter>[/] to accept)[/]")
+                            .AddChoiceGroup(
+                                "Files",
+                                entries
+                                    .Where(entry => !Path.GetFileName(entry.Path ?? String.Empty).StartsWith("."))
+                                    .Where(entry => Path.GetExtension(entry.Path) != ".safetensors" && entry.Path != "model.safetensors.index.json")
+                                    .Where(entry => Path.GetExtension(entry.Path) != ".bin" && entry.Path != "pytorch_model.bin.index.json")
+                                    .Select(entry => entry.Id ?? String.Empty)
+                                    .ToList()
+                            )
+                            .AddChoiceGroup(
+                                "Safetensors",
+                                entries
+                                    .Where(entry => Path.GetExtension(entry.Path) == ".safetensors" || entry.Path == "model.safetensors.index.json")
+                                    .Select(entry => entry.Id ?? String.Empty)
+                                    .ToList()
+                            )
+                            .AddChoiceGroup(
+                                "PyTorch",
+                                entries
+                                    .Where(entry => Path.GetExtension(entry.Path) == ".bin" || entry.Path == "pytorch_model.bin.index.json")
+                                    .Select(entry => entry.Id ?? String.Empty)
+                                    .ToList()
+                            )
+                            .AddChoiceGroup(
+                                "Files (dot)",
+                                entries
+                                    .Where(entry => Path.GetFileName(entry.Path ?? String.Empty).StartsWith("."))
+                                    .Select(entry => entry.Id ?? String.Empty)
+                                    .ToList()
+                            )
+                    ).Select(text => entriesByText[text])
+                    .ToList()
+                );
+            }
+
+            var table = new Table();
+            table.AddColumns(["Type", "SHA256", "Size", "Path"]);
+            selectedEntries.ForEach(fileEntry => table.AddRow(fileEntry.Type ?? String.Empty, fileEntry.Oid ?? String.Empty, $"{fileEntry.Size}", fileEntry.Path ?? String.Empty));
+            AnsiConsole.Write(table);
+
+            if (!Directory.Exists(savePath))
+                Directory.CreateDirectory(savePath);
+
+            await AnsiConsole.Progress()
+                .AutoClear(false)
+                .HideCompleted(false)
+                .Columns(
+                    [
+                        new TaskDescriptionColumn(),
+                            new ProgressBarColumn(),
+                            new PercentageColumn(),
+                            new RemainingTimeColumn(),
+                            new TransferSpeedColumn(),
+                            new SpinnerColumn(),
+                    ]
+                )
+                .StartAsync(async ctx =>
+                {
+                    await Task.WhenAll(selectedEntries.Select(async fileEntry =>
+                    {
+                        var task = ctx.AddTask(fileEntry.Path ?? String.Empty, new ProgressTaskSettings { AutoStart = true });
+                        await Download(task, !isDataset ? id : $"datasets/{id}", branchName ?? "main", savePath, fileEntry.Path ?? String.Empty, fileEntry.Size ?? 0, cancellationTokenSource.Token);
+                    }));
+                });
+
+            //{
+            //    var instructions = "You are a helpful assistant, and you respond exclusively using markdown tables.";
+            //    //var prompt = "What are the planets of the solar system in order from the Sun? Include other details like the distance from the Sun in AU, how many moons, circumference, etc.";
+            //    var prompts = new[]
+            //    {
+            //        "What is 1+1?",
+            //        "2",
+            //        "What is 2+2?",
+            //    };
+
+            //    await foreach (var token in GptModel.PromptAsync(instructions, prompts, cancellationTokenSource.Token))
+            //    {
+            //        await Console.Out.WriteAsync(token);
+            //    }
+            //}
+
+            //{
+            //    var models = await HuggingFace.SearchModelsAsync(author: "TheBloke", search: "GGML", full: true, config: true, cancellationToken: cancellationTokenSource.Token);
+
+            //    await models
+            //        .OrderByDescending(x => x.LastModified)
+            //        .Take(1)
+            //        .ForEachAsync(async model => {
+            //            await Console.Out.WriteLineAsync($"[{model.Id}][{model.LastModified}][{model.Siblings.Count}]");
+            //            //await WriteEntriesAsync(await HuggingFace.FetchModelEntriesAsync(model.Id), 4);
+
+            //            var card = await HuggingFace.FetchModelCardAsync(model.Id) ?? String.Empty;
+            //            //var html = Markdig.Markdown.ToHtml(card);
+            //            await Console.Out.WriteLineAsync(card);
+
+            //            //var fileName = Path.GetFullPath("README.html");
+            //            //await Console.Out.WriteLineAsync($"[{fileName}]");
+            //            //await File.WriteAllTextAsync(fileName, html);
+            //            //Process.Start(new ProcessStartInfo { FileName = fileName, UseShellExecute = true });
+            //        });
+            //}
+
+            //{
+            //    var authors = new[]
+            //    {
+            //        "Open-Orca",
+            //        "OpenAssistant",
+            //        "ehartford",
+            //    };
+
+            //    var datasets = await HuggingFace.SearchDatasetsAsync(author: authors[0], full: true, cancellationToken: cancellationTokenSource.Token);
+
+            //    await datasets
+            //        .OrderByDescending(x => x.LastModified)
+            //        .Take(1)
+            //        .ForEachAsync(async dataset => {
+            //            await Console.Out.WriteLineAsync($"[{dataset.Id}][{dataset.LastModified}]");
+            //            await WriteEntriesAsync(await HuggingFace.FetchDatasetEntriesAsync(dataset.Id), 4);
+            //            //await Console.Out.WriteLineAsync(await HuggingFace.FetchDatasetCardAsync(dataset.Id));
+            //        });
+            //}
+
+            //{
+            //    var id = "Open-Orca/OpenOrca";
+            //    var path = "3_5M-GPT3_5-Augmented.parquet";
+            //    var branch = "main";
+            //    var size = 3090560834L;
+
+            //    var chunkCount = 4;
+            //    var chunkSize = (long)(size / (double)chunkCount);
+            //    var chunkRemainder = size % chunkCount;
+
+            //    var url = $"https://hf.co/datasets/{id}/resolve/{branch}/{path}";
+
+            //    var ranges = Enumerable.Range(0, 4)
+            //        .Select(
+            //            i =>
+            //            {
+            //                var from = i * chunkSize;
+            //                var to = from + chunkSize - 1 + (i < chunkCount - 1 ? 0 : chunkRemainder);
+            //                return (From: from, To: to, Length: to - from + 1);
+            //            }
+            //        )
+            //        .ToList();
+
+            //    //var total = ranges
+            //    //    .Select(x => x.Length)
+            //    //    .Aggregate((x, y) => x + y);
+
+            //    var tasks = ranges
+            //        .Select(
+            //            (x, i) => {
+            //                var fileInfo = new FileInfo($"{path}.part{i:00}");
+            //                return DownloadFile(
+            //                    url,
+            //                    fileInfo.Name,
+            //                    x.From,
+            //                    x.To,
+            //                    //progress: (read, total) => Console.Write($"\r{new String(' ', 100)}\r{read}/{total} [{read / (double)total * 100:0.0} %]"),
+            //                    cancellationToken: cancellationTokenSource.Token
+            //                );
+            //            }
+            //        )
+            //        .ToList();
+
+            //    await Task.WhenAll(tasks);
+
+            //    await Console.Out.WriteLineAsync();
+            //    if (cancellationTokenSource.IsCancellationRequested)
+            //        await Console.Out.WriteLineAsync($"Cancelled.");
+            //}
         }
 
-        private static async Task Download(ProgressTask task, string name, string branch, string path, string fileEntryPath, long size, CancellationToken token)
+        private static async Task Download(ProgressTask task, string id, string branch, string path, string fileEntryPath, long size, CancellationToken token)
         {
             try
             {
@@ -240,7 +267,7 @@ namespace hfmd
                 using var request = new HttpRequestMessage()
                 {
                     Method = HttpMethod.Get,
-                    RequestUri = new Uri($"https://hf.co/{name}/resolve/{branch}/{fileEntryPath}"),
+                    RequestUri = new Uri($"https://hf.co/{id}/resolve/{branch}/{fileEntryPath}"),
                 };
 
                 if (resumeOffset > 0)

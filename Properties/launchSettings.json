@@ -2,7 +2,7 @@
   "profiles": {
     "hfmd": {
       "commandName": "Project",
-      "commandLineArgs": "abacusai/Smaug-34B-v0.1 C:\\LLM_MODELS\\"
+      "commandLineArgs": "dataset:ikawrakow/validation-datasets-for-llama.cpp C:\\LLM_MODELS\\"
     }
   }
 }

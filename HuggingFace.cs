@@ -5,7 +5,7 @@ namespace hfmd
 {
     public static class HuggingFace
     {
-        private enum RepoType { Model, Dataset };
+        internal enum RepoType { Model, Dataset };
 
         private static async Task<List<T>> SearchAsync<T>(
             RepoType repoType,
@@ -92,13 +92,13 @@ namespace hfmd
             CancellationToken cancellationToken = default
         ) => SearchAsync<DatasetData>(RepoType.Dataset, search, author, filter, sort, direction, limit, full, null, cancellationToken);
 
-        private static async Task<List<Entry>> FetchEntriesAsync(RepoType repoType, string? id, string? branchName = null, string? path = null, CancellationToken cancellationToken = default)
+        internal static async Task<List<Entry>> FetchEntriesAsync(RepoType repoType, string? id, string? branchName = "main", string? path = null, CancellationToken cancellationToken = default)
         {
             // https://hf.co/api/models/ehartford/dolphin-llama-13b/tree/main
             // https://hf.co/api/datasets/ehartford/dolphin/tree/main
 
             var url = $"https://hf.co/api/{$"{repoType}".ToLower()}s/{id}/tree/{branchName}{path}";
-            //await Console.Out.WriteLineAsync($"[{url}]");
+            await Console.Out.WriteLineAsync($"[{url}]");
 
             using var httpClient = new HttpClient();
             using var response = (await httpClient.GetAsync(url, cancellationToken)).EnsureSuccessStatusCode();
