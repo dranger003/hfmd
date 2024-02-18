@@ -1,4 +1,4 @@
-Simple Hugging Face model/dataset downloader, with custom selections and supports simultaneous downloads.
+Simple Hugging Face model/dataset downloader, with custom selections and supports simultaneous downloads for Windows and Linux.
 
 To download a model:
 ```
