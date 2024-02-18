@@ -1,8 +1,7 @@
 {
   "profiles": {
     "hfmd": {
-      "commandName": "Project",
-      "commandLineArgs": "dataset:ikawrakow/validation-datasets-for-llama.cpp C:\\LLM_MODELS\\"
+      "commandName": "Project"
     }
   }
 }
