@@ -1,4 +1,5 @@
-Simple Hugging Face model/dataset downloader, with custom selections and supports simultaneous downloads.  
+Simple Hugging Face model/dataset downloader, with custom selections and supports simultaneous downloads.
+
 To download a model:
 ```
 hfmd <model-id> <dest-path>
