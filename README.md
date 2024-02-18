@@ -18,4 +18,6 @@ hfmd dataset:ikawrakow/validation-datasets-for-llama.cpp C:\LLM_MODELS\
 ```
 Screenshot:
 
+![Screenshot 2024-02-17 211645](https://github.com/dranger003/hfmd/assets/1760549/6c61e471-e51a-402f-8ad4-15df32cb7138)
+
 ![Screenshot 2024-02-17 210430](https://github.com/dranger003/hfmd/assets/1760549/51333f5f-f477-4ef6-ad0d-b323104e3dbd)
